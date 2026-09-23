@@ -1,0 +1,6 @@
+# 编译产物
+student_score_system
+*.o
+
+# JetBrains IDE
+.idea/
