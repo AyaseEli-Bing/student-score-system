@@ -2,7 +2,8 @@
  * 学生成绩管理系统（基础版）
  * 只用到：变量、输入输出、if、循环、数组、结构体、函数
  * 没有用：指针、链表、malloc、文件操作
- * 输入统一用 getchar 逐字符读入整行（不用 scanf），这样畸形输入不会被半截接受
+ * 输入统一用 getchar 逐字符读入整行（不用 scanf），这样畸形输入不会被半截接受，
+ * 整行读不完也绝不会残留到下一次输入里
  */
 #include <stdio.h>
 #include <string.h>   /* 只用了 strcpy / strcmp，用来复制和比较字符串 */
@@ -61,9 +62,9 @@ int main(void) {
 
         choice = -1;                          /* -1 表示"这次输入没拿到数字" */
         if (state == 1) {
-            choice = line_to_number(line);   /* 这一行不是纯数字的话，仍然是 -1 */
+            choice = line_to_number(line);   /* 这一行不是纯数字则为负数 */
         }
-        if (choice == -1) {
+        if (choice < 0) {
             printf("! 输入无效，请输入 1 到 8 之间的数字。\n");
             continue;          /* 跳过本次循环，重新显示菜单 */
         }
@@ -105,16 +106,24 @@ void print_menu(void) {
 }
 
 /* 功能：一个字符一个字符地读，直到读完一整行（遇到回车为止） */
-/* 空格和制表符会被直接忽略；超出 NAME_LEN-1 的部分丢掉并给出提示 */
-/* 返回值：1 = 读到了内容；0 = 这一行是空的（只按了一次回车）；-1 = 输入流结束（EOF） */
+/* 行首和行尾的空格、制表符会被去掉；行中间的空格保留，这样 "8 5" 才会被判为非法 */
+/* '\r' 一律丢掉，这样在 Windows 下编辑的 CRLF 文本重定向进来也能正常读 */
+/* 整行装不进缓冲区时，这一行直接作废并要求重输（绝不只存半个汉字，也不会产生假重名） */
+/* 注意：line 必须是长度至少 NAME_LEN 的数组；返回 -1 时缓冲区内容无效，调用方不得使用 */
+/* 返回值：1 = 读到合适内容；0 = 空行（只按回车）；2 = 整行太长；-1 = 输入流结束（EOF） */
 int read_line(char line[]) {
     int ch;      /* 每次读到的一个字符，必须用 int 才装得下 EOF */
-    int len;     /* 已经存进去几个字符 */
-    int cut;     /* 1 = 内容太长，末尾被截断过 */
+    int len;     /* 已经存进去几个字节 */
+    int over;    /* 1 = 这一行太长，内容作废 */
 
     len = 0;
-    cut = 0;
+    over = 0;
     ch = getchar();
+
+    while (ch == ' ' || ch == '\t' || ch == '\r') {   /* 先跳掉行首的空白 */
+        ch = getchar();
+    }
+
     while (ch != '\n') {
         if (ch == EOF) {
             if (len == 0) {
@@ -122,20 +131,24 @@ int read_line(char line[]) {
             }
             break;                          /* 已经读到内容，就当成这一行读完了 */
         }
-        if (ch != ' ' && ch != '\t') {
+        if (ch != '\r') {
             if (len < NAME_LEN - 1) {
                 line[len] = ch;
                 len = len + 1;
             } else {
-                cut = 1;
+                over = 1;   /* 装不下了：仍要把这一行剩下的字符读干净，不能留到下次输入 */
             }
         }
         ch = getchar();
     }
+
+    while (len > 0 && (line[len - 1] == ' ' || line[len - 1] == '\t')) {   /* 去掉行尾空白 */
+        len = len - 1;
+    }
     line[len] = '\0';   /* 手动补上字符串结束标记，这样它才能当字符串用 */
 
-    if (cut) {
-        printf("! 输入超过 %d 个字符，多余的部分已忽略。\n", NAME_LEN - 1);
+    if (over) {
+        return 2;
     }
     if (len == 0) {
         return 0;
@@ -144,8 +157,9 @@ int read_line(char line[]) {
 }
 
 /* 功能：把一整行文本转换成整数 */
-/* 每一位都必须是 0~9，出现字母、符号（包括负号）就整行判为无效，返回 -1 */
+/* 每一位都必须是 0~9，出现字母、空格、符号（含负号）都判为非法 */
 /* 这就是不用 scanf 的好处：scanf 会把 "85abc" 读成 85 然后当合法输入 */
+/* 返回值：>=0 = 转换结果；-1 = 含非数字字符；-2 = 数字过大（顺带避免整数溢出） */
 int line_to_number(char line[]) {
     int i;
     int value;
@@ -159,7 +173,7 @@ int line_to_number(char line[]) {
         }
         value = value * 10 + digit;
         if (value > 100000) {
-            return -1;           /* 数字大到离谱也算无效，顺带避免整数溢出 */
+            return -2;
         }
     }
     return value;
@@ -180,7 +194,11 @@ int read_text(char text[]) {
         if (state == 1) {
             return 1;
         }
-        printf("! 不能只按回车，请重新输入：");
+        if (state == 2) {
+            printf("! 输入太长（最多 %d 个字节，约 6 个汉字），请重新输入：", NAME_LEN - 1);
+        } else {
+            printf("! 不能只按回车，请重新输入：");
+        }
     }
 }
 
@@ -201,6 +219,10 @@ int read_valid_score(char name[]) {
             printf("! 输入已结束，已取消本次操作。\n");
             return -1;
         }
+        if (state == 2) {
+            printf("! 输入太长，请重新输入。\n");
+            continue;
+        }
         if (state == 0) {
             printf("! 不能只按回车，请输入 0 到 100 之间的整数。\n");
             continue;
@@ -208,11 +230,11 @@ int read_valid_score(char name[]) {
 
         score = line_to_number(line);
         if (score == -1) {
-            /* 这一行里混进了非数字字符，提示后重新要求输入 */
-            printf("! 成绩必须是数字，请重新输入。\n");
+            /* 这一行里混进了字母、空格或符号，提示后重新要求输入 */
+            printf("! 成绩只能是数字，中间不要加空格或字母，请重新输入。\n");
             continue;
         }
-        if (score > 100) {
+        if (score > 100 || score == -2) {
             printf("! 成绩必须在 0 到 100 之间，请重新输入。\n");
             continue;
         }
@@ -299,7 +321,7 @@ void show_statistics(void) {
     int    i;
     int    max_score, min_score, total;
     int    max_index, min_index;   /* 记住最高分和最低分在第几个学生 */
-    int    pass_count;             /* 及格（60 分及以上）人数 */
+    int    pass_count;             /* 及格（60 分及以上）人数，由总人数减去不及格人数算出 */
     int    seg_90, seg_80, seg_70, seg_60, seg_fail;   /* 各分数段人数 */
     double average;
 
@@ -314,7 +336,6 @@ void show_statistics(void) {
     min_score  = students[0].score;
     min_index  = 0;
     total      = 0;
-    pass_count = 0;
     seg_90     = 0;
     seg_80     = 0;
     seg_70     = 0;
@@ -452,13 +473,14 @@ void delete_student(void) {
     }
 
     /* 删除是不可恢复的操作，所以先让用户确认一次 */
-    printf("将删除：%s，成绩 %d 分（第 %d 条记录）。确认删除请输入 y，其他内容都取消：",
+    printf("将删除：%s，成绩 %d 分（第 %d 条记录）。确认请输入 y 或 yes，其他任意内容取消：",
            name, students[idx].score, idx + 1);
     if (read_text(answer) == 0) {
         return;
     }
-    /* 只要第一个字母不是 y/Y 就取消：y、Y、yes 都算确认，打错的都会被挡下来 */
-    if (answer[0] != 'y' && answer[0] != 'Y') {
+    /* 只要不是这四个写法之一就取消：删除不可恢复，宁可让用户多打一次 */
+    if (strcmp(answer, "y") != 0 && strcmp(answer, "Y") != 0 &&
+        strcmp(answer, "yes") != 0 && strcmp(answer, "YES") != 0) {
         printf("已取消删除，%s 的记录保持不变。\n", name);
         return;
     }
